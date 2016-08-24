@@ -69,7 +69,6 @@ class BPFParser(BPFConstants):
 
     def p_recover(self, p):
         """ line : error """
-        import pdb; pdb.set_trace()
 
     def p_line(self, p):
         """ line : label instr """
@@ -114,20 +113,20 @@ class BPFParser(BPFConstants):
         p[0] = (self.BPF_JMP | self.BPF_JA, 0, 0, p[2])
 
     def p_instr_jmp_if(self, p):
-        """ instr : instr_jmp_name '#' NUMBER ',' ID """
+        """ instr : instr_jmp_name number ',' ID """
         instr, inverted = p[1]
         p[0] = (instr, 
-                p[5] if not inverted else 0, 
-                p[5] if inverted else 0, 
-                p[3])
+                p[4] if not inverted else 0,
+                p[4] if inverted else 0,
+                p[2])
 
     def p_instr_jmp_if_else(self, p):
-        """ instr : instr_jmp_name '#' NUMBER ',' ID ',' ID """
+        """ instr : instr_jmp_name number ',' ID ',' ID """
         instr, inverted = p[1]
         p[0] = (instr,
-                p[5] if not inverted else p[7],
-                p[5] if inverted else p[7], 
-                p[3])
+                p[4] if not inverted else p[6],
+                p[4] if inverted else p[6],
+                p[2])
 
     def p_instr_jmp_name_true(self, p):
         """ instr_jmp_name : JEQ 
@@ -199,9 +198,9 @@ class BPFParser(BPFConstants):
         p[0] = (self.BPF_LD | self.BPF_B | self.BPF_IND, 0, 0, p[5])
 
     def p_instr_ldx_imm(self, p):
-        """ instr : LDX '#' NUMBER 
-                  | LDXI '#' NUMBER """
-        p[0] = (self.BPF_LDX | self.BPF_W | self.BPF_IMM, 0, 0, p[3])
+        """ instr : LDX number
+                  | LDXI number """
+        p[0] = (self.BPF_LDX | self.BPF_W | self.BPF_IMM, 0, 0, p[2])
 
     def p_instr_ldx_mem(self, p):
         """ instr : LDX M '[' NUMBER ']' """
@@ -233,7 +232,7 @@ class BPFParser(BPFConstants):
     def p_neg_number(self, p):
         """ number : '#' '-' NUMBER """
         p[0] = -p[3]
-        
+
     def p_error(self, p):
         if p is None:
             print "Syntax error at end of file"

@@ -5,7 +5,8 @@ import dpkt
 from pybpf.assembler import BPFAssembler
 from pybpf.reader import BPFReader
 from pybpf.disassembler import BPFDisassembler
-from pybpf.disassembler import BPFTracer
+from pybpf.executor import BPFExecutor
+from pybpf.pcap import PCAPReader
 
 def assembler_main(args):
     data = args.input.read()
@@ -17,7 +18,7 @@ def assembler_main(args):
         sys.stderr.write("Assembler failed\n")
         return 1
 
-    if args.c:    
+    if args.c:
         for line in program:
             args.output.write('{ 0x%x, %d, %d, 0x%08x },\n' % line)
     else:
@@ -39,19 +40,48 @@ def disassembler_main(args):
 
     executor = BPFTracer()
     executor.set_program(program)
-    
+
     for ts, buf in pcap:
        ret = executor.run(buf)
 
-#    
+
+def tester_main(args):
+    if args.f:
+        data = args.f.read()
+
+        assembler = BPFAssembler()
+
+        program = assembler.assemble(data)
+        if not program:
+            sys.stderr.write("Assembler failed\n")
+            return 1
+    elif args.p:
+        program = BPFReader().read(args.p)
+    else:
+        sys.stderr.write("Either -p or -f is required")
+        return 1
+
+    pcap = PCAPReader(args.pcap)
+    executor = BPFExecutor()
+
+    executor.set_program(program)
+
+    for i, (ts, len, data) in enumerate(pcap):
+        executor.start(packet=data)
+        while executor.step():
+            pass
+        print "Packet %d: Result 0x%X" % (i, executor.stop())
+
+    return 0
+
 
 def main():
 
     parser = argparse.ArgumentParser(description='BPF tool')
-    
+
     subparsers = parser.add_subparsers()
-    
-    subparser = subparsers.add_parser('asm')
+
+    subparser = subparsers.add_parser('asm', help="Assembler")
     subparser.add_argument('input', help="Input file (default: stdin)",
                         nargs='?', type=argparse.FileType('r'), default='-')
     subparser.add_argument('output', help="Output file (default: stdin)",
@@ -59,15 +89,25 @@ def main():
     subparser.add_argument('-c', action='store_true', help="output in C style")
     subparser.set_defaults(func=assembler_main)
 
-    subparser = subparsers.add_parser('disasm')
+    subparser = subparsers.add_parser('disasm', help="Disassembler")
     subparser.add_argument('input', help="Input file (default: stdin)",
                         nargs='?', type=argparse.FileType('r'), default='-')
     subparser.add_argument('output', help="Output file (default: stdin)",
                         nargs='?', type=argparse.FileType('w'), default='-')
     subparser.set_defaults(func=disassembler_main)
 
+    subparser = subparsers.add_parser('test', help='Test BPF on PCAPs')
+    subparser.add_argument('pcap', help="Input PCAP file (default: stdin)",
+                        nargs='?', type=argparse.FileType('r'), default='-')
+    group = subparser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-f', type=argparse.FileType('r'),
+                       metavar='BPF', help="BPF Filter (uncompiled)")
+    group.add_argument('-p', type=argparse.FileType('r'),
+                       metavar='BPF', help="BPF Filter (compiled)")
+    subparser.set_defaults(func=tester_main)
+
     args = parser.parse_args()
-    args.func(args)
+    sys.exit(args.func(args))
 
 if __name__ == '__main__':
     main()
