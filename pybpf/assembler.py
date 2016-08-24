@@ -1,3 +1,5 @@
+import sys
+
 from pybpf.common import BPFConstants
 
 import ply.lex as lex
@@ -15,30 +17,40 @@ class BPFLexer(object):
             t.type = t.value = t.value.upper()
         return t
 
-    literals = ":,#%[]()+*&"
+    literals = ":,#%[](){}+-*&"
 
     def t_NUMBER(self, t):
-        r'(?i)[-+]?(0x[0-9a-f]+|0b[01]+|[1-9]\d*|0\d*)'
+        r'(?i)(0x[0-9a-f]+|0b[01]+|[1-9]\d*|0\d*)'
         t.value = int(t.value, 0)
+        if t.value > 0xFFFFFFFF or t.value < -0xFFFFFFFF:
+            sys.stderr.write("Integer too large on line %d\n" % t.lineno)
+            self.errors += 1
         return t
 
     def t_COMMENT(self, t):
         r'/\*.*?\*/|;.*|^\#.*'
 
-    def t_WHITE(self, t):
-        r'\s+'
+    def t_NEWLINE(self, t):
+        r'\n+'
+        t.lexer.lineno += len(t.value)
 
-    tokens = (
-        "NUMBER", "COMMENT", "WHITE", "ID",
-    ) + tuple(w.upper() for w in words)
+    def t_WHITE(self, t):
+        r'[\t ]+'
+
+    ignored_tokens = ("NEWLINE", "COMMENT", "WHITE")
+
+    tokens = ("NUMBER", "ID") + ignored_tokens + tuple(w.upper() for w in words)
 
     # Build the lexer
     def build(self, **kwargs):
-        self.lexer = lex.lex(module=self, **kwargs)
+        self.lexer = lex.lex(module=self, optimize=False, debug=False, **kwargs)
+        self.errors = 0
 
     def t_error(self, t):
-        print("Illegal character '%s'" % t.value[0])
+        print("Illegal character '%s' on line %d" % (t.value[0], t.lineno))
         t.lexer.skip(1)
+        t.type = 'error'
+        return t
 
     def input(self, data):
         self.lexer.input(data)
@@ -80,8 +92,8 @@ class BPFParser(BPFConstants):
         p[0] = (p[1] | self.BPF_X, 0, 0, 0)
 
     def p_instr_alu_k(self, p):
-        """ instr : instr_alu_name '#' NUMBER """
-        p[0] = (p[1] | self.BPF_K, 0, 0, p[3])
+        """ instr : instr_alu_name number """
+        p[0] = (p[1] | self.BPF_K, 0, 0, p[2])
 
     def p_instr_alu_name(self, p):
         """ instr_alu_name : ADD 
@@ -145,8 +157,8 @@ class BPFParser(BPFConstants):
         p[0] = (self.BPF_MISC | self.BPF_TXA, 0, 0, 0)
 
     def p_instr_misc_ret_const(self, p):
-        """ instr : RET '#' NUMBER """
-        p[0] = (self.BPF_RET | self.BPF_K, 0, 0, p[3])
+        """ instr : RET number """
+        p[0] = (self.BPF_RET | self.BPF_K, 0, 0, p[2])
 
     def p_instr_misc_ret_a(self, p):
         """ instr : RET '%' A 
@@ -154,9 +166,9 @@ class BPFParser(BPFConstants):
         p[0] = (self.BPF_RET | self.BPF_A, 0, 0, 0)
 
     def p_instr_ld_imm(self, p):
-        """ instr : LD '#' NUMBER 
-                  | LDI '#' NUMBER """
-        p[0] = (self.BPF_LD | self.BPF_IMM, 0, 0, p[3])
+        """ instr : LD number 
+                  | LDI number """
+        p[0] = (self.BPF_LD | self.BPF_IMM, 0, 0, p[2])
 
     def p_instr_ld_mem(self, p):
         """ instr : LD M '[' NUMBER ']' """
@@ -214,16 +226,32 @@ class BPFParser(BPFConstants):
         """ reg_x : '%' X 
                   | X """
 
+    def p_number(self, p):
+        """ number : '#' NUMBER """
+        p[0] = p[2]
+
+    def p_neg_number(self, p):
+        """ number : '#' '-' NUMBER """
+        p[0] = -p[3]
+        
     def p_error(self, p):
-        print "Syntax error"
+        if p is None:
+            print "Syntax error at end of file"
+        else:
+            print "Syntax error: Unpected token %s on line %d" % (p.type, p.lineno)
+        self.errors += 1
 
     def build(self, lexer):
         self.lexer = lexer
-        self.tokens = lexer.tokens
-        self.parser = yacc.yacc(module=self)
+        self.tokens = filter(lambda t: t not in lexer.ignored_tokens, lexer.tokens)
+        self.parser = yacc.yacc(module=self, debug=False)
 
     def parse(self, data, debug=False):
-        return self.parser.parse(data, lexer=self.lexer, debug=debug)
+        self.errors = 0
+        prog = self.parser.parse(data, lexer=self.lexer, debug=False)
+        if self.errors or self.lexer.errors:
+            return None
+        return prog
 
 
 class BPFAssembler(object):
@@ -235,6 +263,10 @@ class BPFAssembler(object):
 
     def assemble(self, data):
         raw = self.parser.parse(data)
+
+        # Parser failed
+        if raw is None or None in raw:
+            return None
 
         labels = dict()
         for i, (label, _) in enumerate(raw):

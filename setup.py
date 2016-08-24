@@ -29,9 +29,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'bpf_asm = pybpf.assembler:main',
-            'bpf_disasm = pybpf.disassembler:main',
-            'bpf_dbg = pybpf.debugger:main',
+            'bpf = pybpf.main:main',
         ]
     },
 )
